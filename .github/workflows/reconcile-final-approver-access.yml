@@ -1,0 +1,48 @@
+name: Reconcile Final Approver team access
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: reconcile-final-approver-access
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: self-hosted
+    steps:
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.FINAL_APPROVER_SYNC_APP_ID }}
+          private-key: ${{ secrets.FINAL_APPROVER_SYNC_APP_PRIVATE_KEY }}
+          owner: The-Artificial-Business
+
+      - name: Ensure team has pull access on every org repo
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ORG: The-Artificial-Business
+          TEAM_SLUG: final-approver
+        run: |
+          set -euo pipefail
+
+          gh api "orgs/${ORG}/repos" --paginate -q '.[] | .name' > repos.txt
+          total=$(wc -l < repos.txt)
+          echo "Found ${total} repos in ${ORG}."
+
+          fail=0
+          while read -r repo; do
+            if err=$(gh api -X PUT \
+              "orgs/${ORG}/teams/${TEAM_SLUG}/repos/${ORG}/${repo}" \
+              -f permission=pull --silent 2>&1); then
+              echo "OK   ${repo}"
+            else
+              echo "FAIL ${repo}: ${err}"
+              fail=1
+            fi
+          done < repos.txt
+
+          exit "${fail}"
